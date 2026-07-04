@@ -1,0 +1,294 @@
+#!/bin/bash
+
+#####################################################################
+# Script Name : ec2_health_monitor.sh
+# Purpose     : Linux / EC2 Health Monitoring Script
+# Author      : DevOps Team
+# Usage       : ./ec2_health_monitor.sh
+#####################################################################
+
+# Exit on command failure
+set -e
+
+#####################################################################
+# VARIABLES
+#####################################################################
+
+# Report directory
+REPORT_DIR="$HOME/server_reports"
+
+# Create report directory if not exists
+mkdir -p "$REPORT_DIR"
+
+# Timestamp
+DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+
+# Report file
+REPORT_FILE="$REPORT_DIR/health_report_$DATE.log"
+
+# Thresholds
+CPU_THRESHOLD=80
+MEMORY_THRESHOLD=80
+DISK_THRESHOLD=80
+LOAD_THRESHOLD=2.0
+
+# Hostname
+HOSTNAME=$(hostname)
+
+#####################################################################
+# LOGGING FUNCTION
+#####################################################################
+
+log_message() {
+
+    MESSAGE=$1
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') : $MESSAGE" | tee -a "$REPORT_FILE"
+
+}
+
+#####################################################################
+# ALERT FUNCTION
+#####################################################################
+
+ send_alert() {
+
+    ALERT_MESSAGE=$1
+
+    ALERT_SUBJECT="EC2 HEALTH ALERT on $(hostname)"
+
+    ALERT_EMAIL="your_email@gmail.com"
+
+    #################################################################
+    # Log alert locally
+    #################################################################
+
+    log_message "Sending Email Alert..."
+
+    #################################################################
+    # Send Email
+    #################################################################
+
+    echo "$ALERT_MESSAGE" | mail -s "$ALERT_SUBJECT" "$ALERT_EMAIL"
+
+    #################################################################
+    # Log completion
+    #################################################################
+
+    log_message "Email Alert Sent Successfully"
+
+}
+
+#####################################################################
+# CPU USAGE FUNCTION
+#####################################################################
+
+check_cpu_usage() {
+
+    log_message "Checking CPU Usage..."
+
+    #################################################################
+    # top command explanation
+    #
+    # top -bn1
+    #
+    # -b = batch mode
+    # -n1 = one iteration
+    #################################################################
+
+    CPU_IDLE=$(top -bn1 | grep "Cpu(s)" | awk '{print $8}')
+
+    #################################################################
+    # Calculate actual CPU usage
+    #################################################################
+
+    CPU_USAGE=$(echo "100 - $CPU_IDLE" | bc)
+
+    CPU_USAGE_INT=$(printf "%.0f" "$CPU_USAGE")
+
+    log_message "CPU Usage: ${CPU_USAGE_INT}%"
+
+    #################################################################
+    # Threshold Check
+    #################################################################
+
+    if [ "$CPU_USAGE_INT" -gt "$CPU_THRESHOLD" ]; then
+
+        WARNING="HIGH CPU USAGE DETECTED on $HOSTNAME : ${CPU_USAGE_INT}%"
+
+        log_message "$WARNING"
+
+        send_alert "$WARNING"
+
+    fi
+
+}
+
+#####################################################################
+# MEMORY USAGE FUNCTION
+#####################################################################
+
+check_memory_usage() {
+
+    log_message "Checking Memory Usage..."
+
+    #################################################################
+    # free -m
+    #
+    # -m = display in MB
+    #################################################################
+
+    MEMORY_USAGE=$(free | awk '/Mem:/ {printf("%.0f"), $3/$2 * 100}')
+
+    log_message "Memory Usage: ${MEMORY_USAGE}%"
+
+    #################################################################
+    # Threshold Check
+    #################################################################
+
+    if [ "$MEMORY_USAGE" -gt "$MEMORY_THRESHOLD" ]; then
+
+        WARNING="HIGH MEMORY USAGE DETECTED on $HOSTNAME : ${MEMORY_USAGE}%"
+
+        log_message "$WARNING"
+
+        send_alert "$WARNING"
+
+    fi
+
+}
+
+#####################################################################
+# DISK USAGE FUNCTION
+#####################################################################
+
+check_disk_usage() {
+
+    log_message "Checking Disk Usage..."
+
+    #################################################################
+    # df -h
+    #
+    # -h = human readable
+    #################################################################
+
+    df -h | grep '^/dev/' | while read line
+    do
+
+        USAGE=$(echo "$line" | awk '{print $5}' | sed 's/%//')
+
+        PARTITION=$(echo "$line" | awk '{print $6}')
+
+        log_message "Partition $PARTITION Usage: ${USAGE}%"
+
+        #################################################################
+        # Threshold Check
+        #################################################################
+
+        if [ "$USAGE" -gt "$DISK_THRESHOLD" ]; then
+
+            WARNING="HIGH DISK USAGE DETECTED on $PARTITION : ${USAGE}%"
+
+            log_message "$WARNING"
+
+            send_alert "$WARNING"
+
+        fi
+
+    done
+
+}
+
+#####################################################################
+# LOAD AVERAGE FUNCTION
+#####################################################################
+
+check_load_average() {
+
+    log_message "Checking Load Average..."
+
+    #################################################################
+    # uptime gives:
+    #
+    # load average: 0.50, 0.40, 0.30
+    #
+    # We extract first value
+    #################################################################
+
+    LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1)
+
+    LOAD_INT=$(printf "%.0f" "$LOAD")
+
+    log_message "Current Load Average: $LOAD"
+
+    #################################################################
+    # Threshold Check
+    #################################################################
+
+    if (( $(echo "$LOAD > $LOAD_THRESHOLD" | bc -l) )); then
+
+        WARNING="HIGH LOAD AVERAGE DETECTED : $LOAD"
+
+        log_message "$WARNING"
+
+        send_alert "$WARNING"
+
+    fi
+
+}
+
+#####################################################################
+# SYSTEM INFORMATION
+#####################################################################
+
+system_info() {
+
+    log_message "=================================================="
+    log_message "EC2 HEALTH MONITORING REPORT"
+    log_message "=================================================="
+
+    log_message "Hostname : $HOSTNAME"
+
+    log_message "Kernel   : $(uname -r)"
+
+    log_message "Uptime   : $(uptime -p)"
+
+    log_message "Date     : $(date)"
+
+}
+
+#####################################################################
+# MAIN EXECUTION
+#####################################################################
+
+main() {
+
+    system_info
+
+    check_cpu_usage
+
+    check_memory_usage
+
+    check_disk_usage
+
+    check_load_average
+
+    log_message "=================================================="
+
+    log_message "Health Check Completed Successfully"
+
+    log_message "=================================================="
+
+}
+
+#####################################################################
+# RUN MAIN FUNCTION
+#####################################################################
+
+main
+
+#####################################################################
+# EXIT SUCCESSFULLY
+#####################################################################
+
+exit 0
